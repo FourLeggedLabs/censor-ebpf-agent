@@ -11,8 +11,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
-        with:
-          version: 2025.8.20
       - name: Unit tests
         run: task test
       - name: Cross-build
@@ -26,4 +24,5 @@ jobs:
       - name: Install BPF build deps
         run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev linux-headers-$(uname -r)
       - name: eBPF tests
-        run: task test:bpf
+        # Root for CAP_BPF / memlock so LoadCensorObjects + TestRun actually run.
+        run: sudo -E env "PATH=$PATH" "HOME=$HOME" task test:bpf

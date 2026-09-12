@@ -1,0 +1,36 @@
+name: 'Stop Censor eBPF Agent'
+description: 'Signal the Censor agent to upload logs and exit (use with if: always())'
+author: 'FourLeggedLabs'
+
+inputs:
+  status:
+    description: 'Job status for upload metadata (success|failure|cancelled)'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Stop censor
+      shell: bash
+      env:
+        CENSOR_STATUS: ${{ inputs.status }}
+        JOB_STATUS: ${{ job.status }}
+      run: |
+        set -euo pipefail
+        STATUS="${CENSOR_STATUS}"
+        if [ -z "$STATUS" ]; then
+          case "${JOB_STATUS}" in
+            success) STATUS=success ;;
+            cancelled) STATUS=cancelled ;;
+            *) STATUS=failure ;;
+          esac
+        fi
+        sudo censor stop --pidfile /var/run/censor/censor.pid --status "$STATUS" || true
+        # Give the agent a moment to upload + exit.
+        for i in $(seq 1 30); do
+          if ! sudo kill -0 "$(sudo cat /var/run/censor/censor.pid 2>/dev/null)" 2>/dev/null; then
+            break
+          fi
+          sleep 1
+        done
