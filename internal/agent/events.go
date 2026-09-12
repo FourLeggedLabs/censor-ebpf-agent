@@ -29,15 +29,25 @@ func consumeBPFEvents(log *events.Logger, mode agentv1.Mode, ch <-chan ebpfutil.
 		case 17:
 			proto = agentv1.Protocol_PROTOCOL_UDP
 		}
-		var b [4]byte
-		binary.BigEndian.PutUint32(b[:], ev.Dst)
+		dst := ""
+		if ev.Family == 6 {
+			var b [16]byte
+			for i := 0; i < 4; i++ {
+				binary.BigEndian.PutUint32(b[i*4:], ev.DstV6[i])
+			}
+			dst = net.IP(b[:]).String()
+		} else {
+			var b [4]byte
+			binary.BigEndian.PutUint32(b[:], ev.DstV4)
+			dst = net.IP(b[:]).String()
+		}
 		_ = log.WriteEvent(&agentv1.AgentEvent{
 			Ts:      timestamppb.Now(),
 			Type:    agentv1.EventType_EVENT_TYPE_CONNECT,
 			Action:  action,
 			Pid:     ev.PID,
 			Comm:    readComm(ev.PID),
-			Dst:     net.IP(b[:]).String(),
+			Dst:     dst,
 			DstPort: uint32(ev.Dport),
 			Proto:   proto,
 		})

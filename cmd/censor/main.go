@@ -68,6 +68,7 @@ func runStart(args []string) int {
 	}
 	if *gha {
 		cfg.DNSListen = "127.0.0.1:53"
+		cfg.DNSRedirect = true
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

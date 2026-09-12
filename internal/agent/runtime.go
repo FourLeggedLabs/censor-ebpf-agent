@@ -13,9 +13,11 @@ import (
 
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/api"
 	censordns "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dns"
+	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dnsredir"
 	ebpfutil "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/ebpf"
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/events"
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/gha"
+	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/githubhosts"
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/sudo"
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/version"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
@@ -31,28 +33,31 @@ const (
 
 // Config is runtime configuration for Start.
 type Config struct {
-	APIURL       string
-	APIKeyPath   string
-	ConfigFile   string // optional protojson AgentPolicy bypass
-	LogPath      string
-	ReadyFile    string
-	FailureFile  string
-	PidFile      string
-	DNSListen    string
-	DNSUpstream  string
+	APIURL        string
+	APIKeyPath    string
+	ConfigFile    string // optional protojson AgentPolicy bypass
+	LogPath       string
+	ReadyFile     string
+	FailureFile   string
+	PidFile       string
+	DNSListen     string
+	DNSUpstream   string
+	DNSRedirect   bool // install iptables DNAT for :53
 	GitHubActions bool
-	Status       string // for upload on stop
+	Status        string // for upload on stop
 }
 
 // Runtime is a started agent.
 type Runtime struct {
-	cfg    Config
-	policy *agentv1.AgentPolicy
-	ghac   *gha.Context
-	log    *events.Logger
-	dns    *censordns.Proxy
-	lock   *sudo.Lockdown
-	client *api.Client
+	cfg       Config
+	policy    *agentv1.AgentPolicy
+	ghac      *gha.Context
+	log       *events.Logger
+	dns       *censordns.Proxy
+	lock      *sudo.Lockdown
+	client    *api.Client
+	dnsRedir  *dnsredir.Redirect
+	dockerDNS *dnsredir.DockerDNS
 }
 
 // Start loads policy, opens log, starts DNS proxy, writes ready sentinel.
@@ -119,13 +124,16 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 		if !ok {
 			return
 		}
-		_ = ebpfutil.AllowIP(addr) // no-op stub until maps wired
+		addr = addr.Unmap()
+		_ = ebpfutil.AllowIP(addr)
 	}
+
+	allowed := githubhosts.MergeAllowed(pol.GetAutoAllowGithubHosts() || cfg.GitHubActions, pol.GetAllowedHosts())
 
 	rt.dns = &censordns.Proxy{
 		Upstream: cfg.DNSUpstream,
 		Mode:     pol.GetMode(),
-		Allowed:  pol.GetAllowedHosts(),
+		Allowed:  allowed,
 		Denied:   pol.GetDeniedHosts(),
 		OnAllow:  allowIPs,
 		OnEvent: func(host string, action agentv1.Action, rule string) {
@@ -141,6 +149,30 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 	if err := rt.dns.Start(cfg.DNSListen); err != nil {
 		_ = rt.Close()
 		return nil, writeFail(cfg.FailureFile, err)
+	}
+
+	if cfg.GitHubActions || cfg.DNSRedirect {
+		host, port := splitHostPort(cfg.DNSListen)
+		rt.dnsRedir = &dnsredir.Redirect{ListenHost: host, ListenPort: port}
+		if err := rt.dnsRedir.Enable(); err != nil {
+			_ = log.WriteEvent(&agentv1.AgentEvent{
+				Ts:     timestamppb.Now(),
+				Type:   agentv1.EventType_EVENT_TYPE_DNS,
+				Action: agentv1.Action_ACTION_ALLOW,
+				Rule:   "dns_redirect_skipped:" + err.Error(),
+			})
+		}
+		if cfg.GitHubActions {
+			rt.dockerDNS = &dnsredir.DockerDNS{DNS: []string{host}}
+			if err := rt.dockerDNS.Enable(); err != nil {
+				_ = log.WriteEvent(&agentv1.AgentEvent{
+					Ts:     timestamppb.Now(),
+					Type:   agentv1.EventType_EVENT_TYPE_DNS,
+					Action: agentv1.Action_ACTION_ALLOW,
+					Rule:   "docker_dns_skipped:" + err.Error(),
+				})
+			}
+		}
 	}
 
 	if err := ebpfutil.AttachFirewall(pol.GetMode() == agentv1.Mode_MODE_MONITOR); err != nil {
@@ -168,6 +200,16 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 // Close tears down DNS/log/sudo (BPF detach via ebpfutil).
 func (rt *Runtime) Close() error {
 	var first error
+	if rt.dockerDNS != nil {
+		if err := rt.dockerDNS.Disable(); err != nil && first == nil {
+			first = err
+		}
+	}
+	if rt.dnsRedir != nil {
+		if err := rt.dnsRedir.Remove(); err != nil && first == nil {
+			first = err
+		}
+	}
 	if rt.dns != nil {
 		if err := rt.dns.Shutdown(); err != nil && first == nil {
 			first = err
@@ -279,4 +321,12 @@ func WaitReady(ready, failure string, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s", ready)
+}
+
+func splitHostPort(addr string) (host, port string) {
+	h, p, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "127.0.0.1", "53"
+	}
+	return h, p
 }
