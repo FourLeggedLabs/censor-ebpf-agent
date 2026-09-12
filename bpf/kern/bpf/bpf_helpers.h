@@ -18,6 +18,7 @@
 static void *(*bpf_map_lookup_elem)(void *map, const void *key) = (void *)1;
 static long (*bpf_map_update_elem)(void *map, const void *key, const void *value, unsigned long long flags) = (void *)2;
 static unsigned long long (*bpf_get_current_pid_tgid)(void) = (void *)14;
+static long (*bpf_get_current_comm)(void *buf, unsigned long long buf_size) = (void *)16;
 static unsigned long long (*bpf_get_socket_cookie)(void *ctx) = (void *)46;
 static void *(*bpf_ringbuf_reserve)(void *ringbuf, unsigned long long size, unsigned long long flags) = (void *)131;
 static void (*bpf_ringbuf_submit)(void *data, unsigned long long flags) = (void *)132;

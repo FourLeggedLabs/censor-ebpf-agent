@@ -32,6 +32,9 @@ struct lpm_v6_key {
 	__u32 addr[4];
 };
 
+#define EVENT_KIND_NET 0
+#define EVENT_KIND_SUDO 1
+
 struct event {
 	__u32 pid;
 	__u32 dst_v4;
@@ -40,7 +43,8 @@ struct event {
 	__u8 proto;
 	__u8 allowed;
 	__u8 family; /* 4 or 6 */
-	__u8 pad[3];
+	__u8 kind;   /* EVENT_KIND_* */
+	char comm[16];
 };
 
 struct {
@@ -79,11 +83,12 @@ struct {
 } events SEC(".maps");
 
 static __always_inline void emit(__u32 pid, __u32 dst4, const __u32 dst6[4], __u16 dport,
-				 __u8 proto, __u8 allowed, __u8 family)
+				 __u8 proto, __u8 allowed, __u8 family, __u8 kind, const char *comm)
 {
 	struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
 	if (!e)
 		return;
+	__builtin_memset(e, 0, sizeof(*e));
 	e->pid = pid;
 	e->dst_v4 = dst4;
 	if (dst6) {
@@ -91,14 +96,14 @@ static __always_inline void emit(__u32 pid, __u32 dst4, const __u32 dst6[4], __u
 		e->dst_v6[1] = dst6[1];
 		e->dst_v6[2] = dst6[2];
 		e->dst_v6[3] = dst6[3];
-	} else {
-		e->dst_v6[0] = e->dst_v6[1] = e->dst_v6[2] = e->dst_v6[3] = 0;
 	}
 	e->dport = dport;
 	e->proto = proto;
 	e->allowed = allowed;
 	e->family = family;
-	e->pad[0] = e->pad[1] = e->pad[2] = 0;
+	e->kind = kind;
+	if (comm)
+		__builtin_memcpy(e->comm, comm, 16);
 	bpf_ringbuf_submit(e, 0);
 }
 
@@ -148,7 +153,7 @@ static __always_inline int handle_v4(struct __sk_buff *skb, void *data, void *da
 	__u32 audit_mode = audit ? *audit : 1;
 	__u32 pid = current_pid_for_skb(skb);
 	int allowed = lookup_allow_v4(ip->daddr);
-	emit(pid, ip->daddr, (const __u32 *)0, dport, ip->protocol, allowed ? 1 : 0, 4);
+	emit(pid, ip->daddr, (const __u32 *)0, dport, ip->protocol, allowed ? 1 : 0, 4, EVENT_KIND_NET, (const char *)0);
 	if (!allowed && !audit_mode)
 		return TC_ACT_SHOT;
 	return TC_ACT_OK;
@@ -183,7 +188,7 @@ static __always_inline int handle_v6(struct __sk_buff *skb, void *data, void *da
 	__u32 audit_mode = audit ? *audit : 1;
 	__u32 pid = current_pid_for_skb(skb);
 	int allowed = lookup_allow_v6(addr);
-	emit(pid, 0, addr, dport, nexthdr, allowed ? 1 : 0, 6);
+	emit(pid, 0, addr, dport, nexthdr, allowed ? 1 : 0, 6, EVENT_KIND_NET, (const char *)0);
 	if (!allowed && !audit_mode)
 		return TC_ACT_SHOT;
 	return TC_ACT_OK;
@@ -221,4 +226,29 @@ int censor_connect6(struct bpf_sock_addr *ctx)
 	__u32 pid = bpf_get_current_pid_tgid() >> 32;
 	bpf_map_update_elem(&sock_pid, &cookie, &pid, BPF_ANY);
 	return 1;
+}
+
+static __always_inline int comm_is_sudo(const char *comm)
+{
+	/* comm is TASK_COMM_LEN (16), not necessarily NUL-padded beyond name. */
+	char c0 = comm[0], c1 = comm[1], c2 = comm[2], c3 = comm[3], c4 = comm[4];
+	if (c0 == 's' && c1 == 'u' && c2 == 'd' && c3 == 'o' && (c4 == '\0' || c4 == '\n'))
+		return 1;
+	/* sudoedit */
+	if (c0 == 's' && c1 == 'u' && c2 == 'd' && c3 == 'o' && c4 == 'e')
+		return 1;
+	return 0;
+}
+
+SEC("tracepoint/sched/sched_process_exec")
+int censor_exec(void *ctx)
+{
+	char comm[16];
+	__builtin_memset(comm, 0, sizeof(comm));
+	bpf_get_current_comm(&comm, sizeof(comm));
+	if (!comm_is_sudo(comm))
+		return 0;
+	__u32 pid = bpf_get_current_pid_tgid() >> 32;
+	emit(pid, 0, (const __u32 *)0, 0, 0, 1, 0, EVENT_KIND_SUDO, comm);
+	return 0;
 }

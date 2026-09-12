@@ -16,6 +16,11 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
+const (
+	EventKindNet  = 0
+	EventKindSudo = 1
+)
+
 // RawEvent is the ringbuf payload from censor.c (keep in sync with struct event).
 type RawEvent struct {
 	PID     uint32
@@ -25,6 +30,8 @@ type RawEvent struct {
 	Proto   uint8
 	Allowed uint8
 	Family  uint8
+	Kind    uint8
+	Comm    [16]byte
 }
 
 var (
@@ -32,14 +39,15 @@ var (
 	objs    bpf.CensorObjects
 	cg4     link.Link
 	cg6     link.Link
+	execL   link.Link
 	tcAtt   *egressAttach
 	rd      *ringbuf.Reader
 	loaded  bool
 	eventCh chan RawEvent
 )
 
-// AttachFirewall loads programs, attaches cgroup connect4/6 + TC egress, starts ringbuf reader.
-func AttachFirewall(auditMode bool) error {
+// AttachFirewall loads programs, attaches cgroup connect4/6 + TC egress (+ optional sudo exec watch).
+func AttachFirewall(auditMode, watchSudo bool) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if loaded {
@@ -89,12 +97,16 @@ func AttachFirewall(auditMode bool) error {
 		return fmt.Errorf("attach egress: %w", err)
 	}
 
+	if watchSudo && objs.CensorExec != nil {
+		execL, err = link.Tracepoint("sched", "sched_process_exec", objs.CensorExec, nil)
+		if err != nil {
+			execL = nil
+		}
+	}
+
 	rd, err = ringbuf.NewReader(objs.Events)
 	if err != nil {
-		_ = tcAtt.Close()
-		_ = cg6.Close()
-		_ = cg4.Close()
-		_ = objs.Close()
+		cleanupPartial()
 		return fmt.Errorf("ringbuf: %w", err)
 	}
 	eventCh = make(chan RawEvent, 1024)
@@ -104,49 +116,14 @@ func AttachFirewall(auditMode bool) error {
 	return nil
 }
 
-func Events() <-chan RawEvent {
-	mu.Lock()
-	defer mu.Unlock()
-	return eventCh
-}
-
-func readEvents(r *ringbuf.Reader, ch chan RawEvent) {
-	for {
-		rec, err := r.Read()
-		if err != nil {
-			return
-		}
-		// pid(4)+dst4(4)+dst6(16)+dport(2)+proto(1)+allowed(1)+family(1)+pad(3) = 32
-		if len(rec.RawSample) < 32 {
-			continue
-		}
-		ev := RawEvent{
-			PID:     binary.LittleEndian.Uint32(rec.RawSample[0:4]),
-			DstV4:   binary.LittleEndian.Uint32(rec.RawSample[4:8]),
-			Dport:   binary.LittleEndian.Uint16(rec.RawSample[24:26]),
-			Proto:   rec.RawSample[26],
-			Allowed: rec.RawSample[27],
-			Family:  rec.RawSample[28],
-		}
-		for i := 0; i < 4; i++ {
-			ev.DstV6[i] = binary.LittleEndian.Uint32(rec.RawSample[8+i*4 : 12+i*4])
-		}
-		select {
-		case ch <- ev:
-		default:
-		}
-	}
-}
-
-func DetachFirewall() error {
-	mu.Lock()
-	defer mu.Unlock()
-	if !loaded {
-		return nil
-	}
+func cleanupPartial() {
 	if rd != nil {
 		_ = rd.Close()
 		rd = nil
+	}
+	if execL != nil {
+		_ = execL.Close()
+		execL = nil
 	}
 	if tcAtt != nil {
 		_ = tcAtt.Close()
@@ -161,6 +138,51 @@ func DetachFirewall() error {
 		cg4 = nil
 	}
 	_ = objs.Close()
+}
+
+func Events() <-chan RawEvent {
+	mu.Lock()
+	defer mu.Unlock()
+	return eventCh
+}
+
+func readEvents(r *ringbuf.Reader, ch chan RawEvent) {
+	const size = 4 + 4 + 16 + 2 + 1 + 1 + 1 + 1 + 16 // 46
+	for {
+		rec, err := r.Read()
+		if err != nil {
+			return
+		}
+		if len(rec.RawSample) < size {
+			continue
+		}
+		ev := RawEvent{
+			PID:     binary.LittleEndian.Uint32(rec.RawSample[0:4]),
+			DstV4:   binary.LittleEndian.Uint32(rec.RawSample[4:8]),
+			Dport:   binary.LittleEndian.Uint16(rec.RawSample[24:26]),
+			Proto:   rec.RawSample[26],
+			Allowed: rec.RawSample[27],
+			Family:  rec.RawSample[28],
+			Kind:    rec.RawSample[29],
+		}
+		for i := 0; i < 4; i++ {
+			ev.DstV6[i] = binary.LittleEndian.Uint32(rec.RawSample[8+i*4 : 12+i*4])
+		}
+		copy(ev.Comm[:], rec.RawSample[30:46])
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+func DetachFirewall() error {
+	mu.Lock()
+	defer mu.Unlock()
+	if !loaded {
+		return nil
+	}
+	cleanupPartial()
 	loaded = false
 	return nil
 }

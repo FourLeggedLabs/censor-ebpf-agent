@@ -8,7 +8,7 @@ import (
 )
 
 // AttachFirewall is a stub on non-Linux platforms.
-func AttachFirewall(auditMode bool) error {
+func AttachFirewall(auditMode, watchSudo bool) error {
 	return fmt.Errorf("ebpf attach requires linux")
 }
 

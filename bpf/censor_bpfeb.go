@@ -37,6 +37,7 @@ const (
 	CensorProgCensorConnect4 = "censor_connect4"
 	CensorProgCensorConnect6 = "censor_connect6"
 	CensorProgCensorEgress   = "censor_egress"
+	CensorProgCensorExec     = "censor_exec"
 )
 
 // LoadCensor returns the embedded CollectionSpec for Censor.
@@ -84,6 +85,7 @@ type CensorProgramSpecs struct {
 	CensorConnect4 *ebpf.ProgramSpec `ebpf:"censor_connect4"`
 	CensorConnect6 *ebpf.ProgramSpec `ebpf:"censor_connect6"`
 	CensorEgress   *ebpf.ProgramSpec `ebpf:"censor_egress"`
+	CensorExec     *ebpf.ProgramSpec `ebpf:"censor_exec"`
 }
 
 // CensorMapSpecs contains maps before they are loaded into the kernel.
@@ -153,6 +155,7 @@ type CensorPrograms struct {
 	CensorConnect4 *ebpf.Program `ebpf:"censor_connect4"`
 	CensorConnect6 *ebpf.Program `ebpf:"censor_connect6"`
 	CensorEgress   *ebpf.Program `ebpf:"censor_egress"`
+	CensorExec     *ebpf.Program `ebpf:"censor_exec"`
 }
 
 func (p *CensorPrograms) Close() error {
@@ -160,6 +163,7 @@ func (p *CensorPrograms) Close() error {
 		p.CensorConnect4,
 		p.CensorConnect6,
 		p.CensorEgress,
+		p.CensorExec,
 	)
 }
 
