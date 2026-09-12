@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/api"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/gha"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/api"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/gha"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )

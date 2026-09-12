@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/gha"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/gha"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -29,6 +29,7 @@ type Client struct {
 	APIKey     string
 	HTTPClient *http.Client
 	Version    string
+	Attempts   int // upload/fetch retries; default 3
 }
 
 // LoadAPIKey reads the static API key from path (default /etc/censor/api-key).
@@ -45,6 +46,19 @@ func LoadAPIKey(path string) (string, error) {
 
 // FetchPolicy GETs AgentPolicy for the current GHA context.
 func (c *Client) FetchPolicy(ctx context.Context, ghac *gha.Context) (*agentv1.AgentPolicy, error) {
+	var pol *agentv1.AgentPolicy
+	err := withRetries(ctx, c.attempts(), func(ctx context.Context) error {
+		p, err := c.fetchPolicyOnce(ctx, ghac)
+		if err != nil {
+			return err
+		}
+		pol = p
+		return nil
+	})
+	return pol, err
+}
+
+func (c *Client) fetchPolicyOnce(ctx context.Context, ghac *gha.Context) (*agentv1.AgentPolicy, error) {
 	u, err := url.Parse(strings.TrimRight(c.BaseURL, "/") + policyPath)
 	if err != nil {
 		return nil, err
@@ -82,25 +96,31 @@ func (c *Client) FetchPolicy(ctx context.Context, ghac *gha.Context) (*agentv1.A
 
 	res, err := c.http().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, mapDoError(err)
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return nil, mapDoError(err)
 	}
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("policy fetch: status %d: %s", res.StatusCode, truncate(body, 256))
+	if cls := ClassifyStatus(res.StatusCode); cls != FailureNone {
+		return nil, &APIError{Class: cls, StatusCode: res.StatusCode, Err: fmt.Errorf("%s", truncate(body, 256))}
 	}
 	pol := &agentv1.AgentPolicy{}
 	if err := protojson.Unmarshal(body, pol); err != nil {
-		return nil, fmt.Errorf("policy decode: %w", err)
+		return nil, &APIError{Class: FailureClient, StatusCode: res.StatusCode, Err: fmt.Errorf("policy decode: %w", err)}
 	}
 	return pol, nil
 }
 
 // UploadLogs POSTs multipart metadata (AgentLogUpload) + gzipped NDJSON log.
 func (c *Client) UploadLogs(ctx context.Context, meta *agentv1.AgentLogUpload, gzipLog []byte) error {
+	return withRetries(ctx, c.attempts(), func(ctx context.Context) error {
+		return c.uploadLogsOnce(ctx, meta, gzipLog)
+	})
+}
+
+func (c *Client) uploadLogsOnce(ctx context.Context, meta *agentv1.AgentLogUpload, gzipLog []byte) error {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -132,17 +152,24 @@ func (c *Client) UploadLogs(ctx context.Context, meta *agentv1.AgentLogUpload, g
 
 	res, err := c.http().Do(req)
 	if err != nil {
-		return err
+		return mapDoError(err)
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 512))
 	if err != nil {
-		return err
+		return mapDoError(err)
 	}
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("log upload: status %d: %s", res.StatusCode, truncate(body, 256))
+	if cls := ClassifyStatus(res.StatusCode); cls != FailureNone {
+		return &APIError{Class: cls, StatusCode: res.StatusCode, Err: fmt.Errorf("%s", truncate(body, 256))}
 	}
 	return nil
+}
+
+func (c *Client) attempts() int {
+	if c.Attempts > 0 {
+		return c.Attempts
+	}
+	return 3
 }
 
 func (c *Client) http() *http.Client {
