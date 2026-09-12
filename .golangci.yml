@@ -1,0 +1,117 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck       # Check for unchecked errors
+    - govet          # Vet examines Go source code
+    - ineffassign    # Detect ineffectual assignments
+    - staticcheck    # Go static analysis
+    - unused         # Check for unused constants, variables, functions
+    - misspell       # Spell checking
+    - revive         # Golint replacement
+    - unconvert      # Remove unnecessary type conversions
+    - unparam        # Find unused function parameters
+    - gosec          # Security checks
+    - gocritic       # Opinionated Go linter
+    - bodyclose      # Check HTTP body close
+    - noctx          # Detect sending HTTP request without context
+    - contextcheck   # Detect context propagation issues
+    - sqlclosecheck  # Check sql.Rows/sql.Stmt are closed
+    - rowserrcheck   # Check sql.Rows errors
+    - errorlint      # Error wrapping checks
+    - exhaustive     # Check exhaustiveness of enum switch
+    - copyloopvar    # Check for loop variable capture (replaces exportloopref)
+    - gochecknoinits # Check for init functions
+    - goconst        # Find repeated strings that could be constants
+    - gomodguard     # Check for blocked dependencies
+    - goprintffuncname # Check printf-like function names
+    - nilerr         # Find returning nil error
+    - nolintlint     # Validate nolint directives
+    - prealloc       # Find slice declarations that could be preallocated
+    - predeclared    # Check for shadowing of predeclared identifiers
+    - thelper        # Detect test helpers without t.Helper()
+    - testifylint    # Check for common testify mistakes
+    - whitespace     # Check for unnecessary whitespace
+    - funlen         # Check function length
+
+  settings:
+    funlen:
+      lines: 120
+      statements: 80
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    govet:
+      enable-all: true
+      disable:
+        - shadow
+        - fieldalignment
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+            - disableStutteringCheck
+        # Surfaces long positional parameter lists (prefer an input struct).
+        # Seeded above the current max so it lands with zero offenders; ratchet
+        # this down in follow-up PRs as we refactor the worst offenders.
+        - name: argument-limit
+          arguments: [10]
+
+    gosec:
+      excludes:
+        - G104  # Audit errors not checked (covered by errcheck)
+        - G307  # Deferring unsafe method (false positives)
+        - G117  # Exported struct field matches secret pattern (config structs, not credentials)
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - unnamedResult
+        - hugeParam
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    staticcheck:
+      checks: ["all"]
+
+  exclusions:
+    rules:
+      # Test files use hardcoded credentials, loopback URLs, and ignored errors — all intentional.
+      # staticcheck SA5011 (nil pointer after t.Fatal) is a false positive in tests:
+      # t.Fatal calls runtime.Goexit which staticcheck doesn't model as a terminator.
+      - path: ".*_test\\.go$"
+        linters:
+          - gocritic
+          - gosec
+          - errcheck
+          - staticcheck
+          - nolintlint
+
+      # Ignore long lines in go:generate
+      - linters:
+          - revive
+        source: "^//go:generate "
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true
+  sort-order:
+    - linter
+    - file

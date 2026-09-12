@@ -1,0 +1,64 @@
+version: "3"
+
+vars:
+  GO: mise exec go@1.27.1 -- go
+  BINARY: bin/censor
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
+tasks:
+  default:
+    desc: Lint, test, and build
+    cmds:
+      - task: test
+      - task: build
+
+  tidy:
+    desc: Tidy Go modules
+    cmds:
+      - "{{.GO}} mod tidy"
+
+  generate:
+    desc: Generate eBPF Go bindings (Linux / docker)
+    cmds:
+      - "{{.GO}} generate ./bpf/..."
+
+  test:
+    desc: Run unit tests (non-BPF)
+    cmds:
+      - "{{.GO}} test ./..."
+
+  test:bpf:
+    desc: Run eBPF tests (Linux + CAP_BPF; skips otherwise)
+    cmds:
+      - "{{.GO}} test -tags=bpf -count=1 ./bpf/ ./internal/ebpf/..."
+
+  test:bpf:docker:
+    desc: Run eBPF tests in privileged Linux container
+    cmds:
+      - |
+        docker run --rm --privileged \
+          -v "{{.USER_WORKING_DIR}}:/src" -w /src \
+          -e GOTOOLCHAIN=local \
+          golang:1.27.1 \
+          bash -c 'apt-get update -qq && apt-get install -y -qq clang llvm libbpf-dev linux-headers-generic >/dev/null && go test -tags=bpf -count=1 ./bpf/ ./internal/ebpf/...'
+
+  build:
+    desc: Build censor for host GOOS/GOARCH
+    cmds:
+      - mkdir -p bin
+      - "{{.GO}} build -ldflags '-X github.com/FourLeggedLabs/ebpf-firewall-agent/internal/version.Version={{.VERSION}}' -o {{.BINARY}} ./cmd/censor"
+
+  build:linux:
+    desc: Cross-build linux amd64 and arm64
+    cmds:
+      - mkdir -p bin
+      - GOOS=linux GOARCH=amd64 {{.GO}} build -o bin/censor-linux-amd64 ./cmd/censor
+      - GOOS=linux GOARCH=arm64 {{.GO}} build -o bin/censor-linux-arm64 ./cmd/censor
+
+  lint:
+    desc: Run golangci-lint if installed
+    cmds:
+      - golangci-lint run ./...
+    status:
+      - command -v golangci-lint
