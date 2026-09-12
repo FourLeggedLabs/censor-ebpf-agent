@@ -144,13 +144,14 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 	}
 
 	if err := ebpfutil.AttachFirewall(pol.GetMode() == agentv1.Mode_MODE_MONITOR); err != nil {
-		// Soft-fail on Darwin / missing caps so unit lifecycle can still be tested with DNS.
 		_ = log.WriteEvent(&agentv1.AgentEvent{
 			Ts:     timestamppb.Now(),
 			Type:   agentv1.EventType_EVENT_TYPE_CONNECT,
 			Action: agentv1.Action_ACTION_ALLOW,
 			Rule:   "bpf_attach_skipped:" + err.Error(),
 		})
+	} else if ch := ebpfutil.Events(); ch != nil {
+		go consumeBPFEvents(log, pol.GetMode(), ch)
 	}
 
 	if err := os.WriteFile(cfg.PidFile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); err != nil {
