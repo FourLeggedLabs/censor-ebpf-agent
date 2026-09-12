@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dedupe"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/dedupe"
 )
 
 func TestCacheSuppressesDuplicates(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dnsredir"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/dnsredir"
 )
 
 func TestDockerDNSRoundTrip(t *testing.T) {

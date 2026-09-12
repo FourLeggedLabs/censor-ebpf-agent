@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/policy"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/policy"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"github.com/miekg/dns"
 )

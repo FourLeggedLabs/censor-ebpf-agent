@@ -49,7 +49,7 @@ tasks:
     desc: Build censor for host GOOS/GOARCH
     cmds:
       - mkdir -p bin
-      - "{{.GO}} build -ldflags '-X github.com/FourLeggedLabs/ebpf-firewall-agent/internal/version.Version={{.VERSION}}' -o {{.BINARY}} ./cmd/censor"
+      - "{{.GO}} build -ldflags '-X github.com/FourLeggedLabs/censor-ebpf-agent/internal/version.Version={{.VERSION}}' -o {{.BINARY}} ./cmd/censor"
 
   build:linux:
     desc: Cross-build linux amd64 and arm64

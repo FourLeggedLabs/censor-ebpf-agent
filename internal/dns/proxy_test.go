@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	censordns "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dns"
+	censordns "github.com/FourLeggedLabs/censor-ebpf-agent/internal/dns"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"github.com/miekg/dns"
 )

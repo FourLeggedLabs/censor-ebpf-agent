@@ -3,8 +3,8 @@ package githubhosts_test
 import (
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/githubhosts"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/policy"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/githubhosts"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/policy"
 )
 
 func TestMergeAllowed(t *testing.T) {

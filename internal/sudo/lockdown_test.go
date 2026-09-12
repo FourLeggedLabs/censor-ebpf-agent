@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/sudo"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/sudo"
 )
 
 func TestIsSudoComm(t *testing.T) {

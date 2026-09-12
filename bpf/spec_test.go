@@ -3,7 +3,7 @@ package bpf_test
 import (
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/bpf"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/bpf"
 )
 
 func TestEmbeddedSpecParses(t *testing.T) {

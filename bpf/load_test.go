@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/bpf"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/bpf"
 	"github.com/cilium/ebpf/rlimit"
 )
 

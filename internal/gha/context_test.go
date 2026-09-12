@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/gha"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/gha"
 )
 
 func TestJobIDStable(t *testing.T) {

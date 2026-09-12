@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	ebpfutil "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/ebpf"
+	ebpfutil "github.com/FourLeggedLabs/censor-ebpf-agent/internal/ebpf"
 )
 
 func TestNewLPMKeyV4(t *testing.T) {

@@ -3,7 +3,7 @@ package policy_test
 import (
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/policy"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/policy"
 )
 
 func TestMatchHost(t *testing.T) {

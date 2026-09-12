@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/events"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/events"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 )
 

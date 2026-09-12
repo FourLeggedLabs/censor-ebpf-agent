@@ -10,7 +10,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/bpf"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/bpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"

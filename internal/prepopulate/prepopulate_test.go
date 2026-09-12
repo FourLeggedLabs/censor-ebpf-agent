@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/prepopulate"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/prepopulate"
 )
 
 func TestParseExistingConnections(t *testing.T) {
