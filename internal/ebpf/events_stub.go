@@ -5,11 +5,12 @@ package ebpfutil
 // RawEvent mirrors the Linux ringbuf event for shared agent code.
 type RawEvent struct {
 	PID     uint32
-	Dst     uint32
+	DstV4   uint32
+	DstV6   [4]uint32
 	Dport   uint16
 	Proto   uint8
 	Allowed uint8
+	Family  uint8
 }
 
-// Events is nil on non-Linux.
 func Events() <-chan RawEvent { return nil }

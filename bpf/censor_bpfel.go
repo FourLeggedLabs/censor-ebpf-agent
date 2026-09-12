@@ -19,15 +19,23 @@ type CensorLpmV4Key struct {
 	Addr      uint32
 }
 
+type CensorLpmV6Key struct {
+	_         structs.HostLayout
+	Prefixlen uint32
+	Addr      [4]uint32
+}
+
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
 	CensorMapAllowV4         = "allow_v4"
+	CensorMapAllowV6         = "allow_v6"
 	CensorMapConfig          = "config"
 	CensorMapEvents          = "events"
 	CensorMapSockPid         = "sock_pid"
 	CensorProgCensorConnect4 = "censor_connect4"
+	CensorProgCensorConnect6 = "censor_connect6"
 	CensorProgCensorEgress   = "censor_egress"
 )
 
@@ -74,6 +82,7 @@ type CensorSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type CensorProgramSpecs struct {
 	CensorConnect4 *ebpf.ProgramSpec `ebpf:"censor_connect4"`
+	CensorConnect6 *ebpf.ProgramSpec `ebpf:"censor_connect6"`
 	CensorEgress   *ebpf.ProgramSpec `ebpf:"censor_egress"`
 }
 
@@ -82,6 +91,7 @@ type CensorProgramSpecs struct {
 // It can be passed ebpf.CollectionSpec.Assign.
 type CensorMapSpecs struct {
 	AllowV4 *ebpf.MapSpec `ebpf:"allow_v4"`
+	AllowV6 *ebpf.MapSpec `ebpf:"allow_v6"`
 	Config  *ebpf.MapSpec `ebpf:"config"`
 	Events  *ebpf.MapSpec `ebpf:"events"`
 	SockPid *ebpf.MapSpec `ebpf:"sock_pid"`
@@ -114,6 +124,7 @@ func (o *CensorObjects) Close() error {
 // It can be passed to LoadCensorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type CensorMaps struct {
 	AllowV4 *ebpf.Map `ebpf:"allow_v4"`
+	AllowV6 *ebpf.Map `ebpf:"allow_v6"`
 	Config  *ebpf.Map `ebpf:"config"`
 	Events  *ebpf.Map `ebpf:"events"`
 	SockPid *ebpf.Map `ebpf:"sock_pid"`
@@ -122,6 +133,7 @@ type CensorMaps struct {
 func (m *CensorMaps) Close() error {
 	return _CensorClose(
 		m.AllowV4,
+		m.AllowV6,
 		m.Config,
 		m.Events,
 		m.SockPid,
@@ -139,12 +151,14 @@ type CensorVariables struct {
 // It can be passed to LoadCensorObjects or ebpf.CollectionSpec.LoadAndAssign.
 type CensorPrograms struct {
 	CensorConnect4 *ebpf.Program `ebpf:"censor_connect4"`
+	CensorConnect6 *ebpf.Program `ebpf:"censor_connect6"`
 	CensorEgress   *ebpf.Program `ebpf:"censor_egress"`
 }
 
 func (p *CensorPrograms) Close() error {
 	return _CensorClose(
 		p.CensorConnect4,
+		p.CensorConnect6,
 		p.CensorEgress,
 	)
 }

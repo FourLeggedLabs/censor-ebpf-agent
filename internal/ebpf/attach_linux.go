@@ -11,32 +11,34 @@ import (
 	"sync"
 
 	"github.com/FourLeggedLabs/ebpf-firewall-agent/bpf"
-	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
-// RawEvent is the ringbuf payload from censor.c.
+// RawEvent is the ringbuf payload from censor.c (keep in sync with struct event).
 type RawEvent struct {
 	PID     uint32
-	Dst     uint32 // big-endian IPv4
+	DstV4   uint32
+	DstV6   [4]uint32
 	Dport   uint16
 	Proto   uint8
 	Allowed uint8
+	Family  uint8
 }
 
 var (
-	mu       sync.Mutex
-	objs     bpf.CensorObjects
-	cgLink   link.Link
-	tcLink   link.Link
-	rd       *ringbuf.Reader
-	loaded   bool
-	eventCh  chan RawEvent
+	mu      sync.Mutex
+	objs    bpf.CensorObjects
+	cg4     link.Link
+	cg6     link.Link
+	tcAtt   *egressAttach
+	rd      *ringbuf.Reader
+	loaded  bool
+	eventCh chan RawEvent
 )
 
-// AttachFirewall loads programs, attaches cgroup connect4 + TCX egress, starts ringbuf reader.
+// AttachFirewall loads programs, attaches cgroup connect4/6 + TC egress, starts ringbuf reader.
 func AttachFirewall(auditMode bool) error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -60,33 +62,38 @@ func AttachFirewall(auditMode bool) error {
 	}
 
 	var err error
-	cgLink, err = attachConnect4(objs.CensorConnect4)
+	cg4, err = attachConnect4(objs.CensorConnect4)
 	if err != nil {
 		_ = objs.Close()
 		return fmt.Errorf("attach connect4: %w", err)
 	}
+	cg6, err = attachConnect6(objs.CensorConnect6)
+	if err != nil {
+		_ = cg4.Close()
+		_ = objs.Close()
+		return fmt.Errorf("attach connect6: %w", err)
+	}
 
 	iface, err := egressInterface()
 	if err != nil {
-		_ = cgLink.Close()
+		_ = cg6.Close()
+		_ = cg4.Close()
 		_ = objs.Close()
 		return fmt.Errorf("iface: %w", err)
 	}
-	tcLink, err = link.AttachTCX(link.TCXOptions{
-		Interface: iface.Index,
-		Program:   objs.CensorEgress,
-		Attach:    ebpf.AttachTCXEgress,
-	})
+	tcAtt, err = attachEgress(iface.Index, objs.CensorEgress)
 	if err != nil {
-		_ = cgLink.Close()
+		_ = cg6.Close()
+		_ = cg4.Close()
 		_ = objs.Close()
-		return fmt.Errorf("attach tcx: %w", err)
+		return fmt.Errorf("attach egress: %w", err)
 	}
 
 	rd, err = ringbuf.NewReader(objs.Events)
 	if err != nil {
-		_ = tcLink.Close()
-		_ = cgLink.Close()
+		_ = tcAtt.Close()
+		_ = cg6.Close()
+		_ = cg4.Close()
 		_ = objs.Close()
 		return fmt.Errorf("ringbuf: %w", err)
 	}
@@ -97,7 +104,6 @@ func AttachFirewall(auditMode bool) error {
 	return nil
 }
 
-// Events returns the live event channel (nil if not attached).
 func Events() <-chan RawEvent {
 	mu.Lock()
 	defer mu.Unlock()
@@ -110,15 +116,20 @@ func readEvents(r *ringbuf.Reader, ch chan RawEvent) {
 		if err != nil {
 			return
 		}
-		if len(rec.RawSample) < 12 {
+		// pid(4)+dst4(4)+dst6(16)+dport(2)+proto(1)+allowed(1)+family(1)+pad(3) = 32
+		if len(rec.RawSample) < 32 {
 			continue
 		}
 		ev := RawEvent{
 			PID:     binary.LittleEndian.Uint32(rec.RawSample[0:4]),
-			Dst:     binary.LittleEndian.Uint32(rec.RawSample[4:8]),
-			Dport:   binary.LittleEndian.Uint16(rec.RawSample[8:10]),
-			Proto:   rec.RawSample[10],
-			Allowed: rec.RawSample[11],
+			DstV4:   binary.LittleEndian.Uint32(rec.RawSample[4:8]),
+			Dport:   binary.LittleEndian.Uint16(rec.RawSample[24:26]),
+			Proto:   rec.RawSample[26],
+			Allowed: rec.RawSample[27],
+			Family:  rec.RawSample[28],
+		}
+		for i := 0; i < 4; i++ {
+			ev.DstV6[i] = binary.LittleEndian.Uint32(rec.RawSample[8+i*4 : 12+i*4])
 		}
 		select {
 		case ch <- ev:
@@ -137,13 +148,17 @@ func DetachFirewall() error {
 		_ = rd.Close()
 		rd = nil
 	}
-	if tcLink != nil {
-		_ = tcLink.Close()
-		tcLink = nil
+	if tcAtt != nil {
+		_ = tcAtt.Close()
+		tcAtt = nil
 	}
-	if cgLink != nil {
-		_ = cgLink.Close()
-		cgLink = nil
+	if cg6 != nil {
+		_ = cg6.Close()
+		cg6 = nil
+	}
+	if cg4 != nil {
+		_ = cg4.Close()
+		cg4 = nil
 	}
 	_ = objs.Close()
 	loaded = false
@@ -153,16 +168,27 @@ func DetachFirewall() error {
 func AllowIP(addr netip.Addr) error {
 	mu.Lock()
 	defer mu.Unlock()
-	if !loaded || !addr.Is4() {
+	if !loaded {
 		return nil
 	}
-	b := addr.As4()
-	key := bpf.CensorLpmV4Key{
-		Prefixlen: 32,
-		Addr:      binary.BigEndian.Uint32(b[:]),
-	}
 	val := uint8(1)
-	return objs.AllowV4.Put(key, val)
+	if addr.Is4() {
+		b := addr.As4()
+		key := bpf.CensorLpmV4Key{
+			Prefixlen: 32,
+			Addr:      binary.BigEndian.Uint32(b[:]),
+		}
+		return objs.AllowV4.Put(key, val)
+	}
+	if addr.Is6() {
+		b := addr.As16()
+		key := bpf.CensorLpmV6Key{Prefixlen: 128}
+		for i := 0; i < 4; i++ {
+			key.Addr[i] = binary.BigEndian.Uint32(b[i*4 : (i+1)*4])
+		}
+		return objs.AllowV6.Put(key, val)
+	}
+	return nil
 }
 
 func egressInterface() (*net.Interface, error) {
