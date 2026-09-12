@@ -9,18 +9,19 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/api"
-	censordns "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dns"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dnsredir"
-	ebpfutil "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/ebpf"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/events"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/gha"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/githubhosts"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/prepopulate"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/sudo"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/version"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/api"
+	censordns "github.com/FourLeggedLabs/censor-ebpf-agent/internal/dns"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/dnsredir"
+	ebpfutil "github.com/FourLeggedLabs/censor-ebpf-agent/internal/ebpf"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/events"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/gha"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/githubhosts"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/prepopulate"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/sudo"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/version"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -29,6 +30,7 @@ const (
 	DefaultReadyFile   = "/var/run/censor/ready"
 	DefaultFailureFile = "/var/run/censor/failure"
 	DefaultPidFile     = "/var/run/censor/censor.pid"
+	DefaultStatusFile  = "/var/run/censor/status"
 	DefaultAPIKeyPath  = "/etc/censor/api-key"
 )
 
@@ -41,11 +43,12 @@ type Config struct {
 	ReadyFile     string
 	FailureFile   string
 	PidFile       string
+	StatusFile    string // written by `censor stop --status`; read on shutdown
 	DNSListen     string
 	DNSUpstream   string
 	DNSRedirect   bool // install iptables DNAT for :53
 	GitHubActions bool
-	Status        string // for upload on stop
+	Status        string // default upload status if StatusFile absent
 }
 
 // Runtime is a started agent.
@@ -70,6 +73,7 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 	}
 	_ = os.Remove(cfg.ReadyFile)
 	_ = os.Remove(cfg.FailureFile)
+	_ = os.Remove(cfg.StatusFile)
 
 	ghac, err := gha.FromEnv()
 	if err != nil {
@@ -176,6 +180,7 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 		}
 	}
 
+	bpfOK := false
 	if err := ebpfutil.AttachFirewall(pol.GetMode() == agentv1.Mode_MODE_MONITOR, pol.GetWatchSudo()); err != nil {
 		_ = log.WriteEvent(&agentv1.AgentEvent{
 			Ts:     timestamppb.Now(),
@@ -183,7 +188,21 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 			Action: agentv1.Action_ACTION_ALLOW,
 			Rule:   "bpf_attach_skipped:" + err.Error(),
 		})
+		requireBPF := pol.GetRequireBpf() || pol.GetMode() == agentv1.Mode_MODE_ENFORCE
+		if requireBPF {
+			_ = rt.Close()
+			return nil, writeFail(cfg.FailureFile, fmt.Errorf("bpf required: %w", err))
+		}
 	} else {
+		bpfOK = true
+		if n, errs := ebpfutil.ParseAndAllowCIDRs(pol.GetAllowedCidrs()); n > 0 || len(errs) > 0 {
+			_ = log.WriteEvent(&agentv1.AgentEvent{
+				Ts:     timestamppb.Now(),
+				Type:   agentv1.EventType_EVENT_TYPE_CONNECT,
+				Action: agentv1.Action_ACTION_ALLOW,
+				Rule:   fmt.Sprintf("cidrs:ok=%d,err=%d", n, len(errs)),
+			})
+		}
 		conns, resolved := prepopulate.Run(allowed, ebpfutil.AllowIP)
 		_ = log.WriteEvent(&agentv1.AgentEvent{
 			Ts:     timestamppb.Now(),
@@ -200,7 +219,14 @@ func Start(ctx context.Context, cfg Config) (*Runtime, error) {
 		_ = rt.Close()
 		return nil, writeFail(cfg.FailureFile, err)
 	}
-	if err := os.WriteFile(cfg.ReadyFile, []byte("ok\n"), 0o644); err != nil {
+	// Ready only after DNS is up; BPF must be up when required (handled above).
+	readyPayload := "ok"
+	if bpfOK {
+		readyPayload = "ok bpf=1"
+	} else {
+		readyPayload = "ok bpf=0"
+	}
+	if err := os.WriteFile(cfg.ReadyFile, []byte(readyPayload+"\n"), 0o644); err != nil {
 		_ = rt.Close()
 		return nil, writeFail(cfg.FailureFile, err)
 	}
@@ -236,7 +262,34 @@ func (rt *Runtime) Close() error {
 	}
 	_ = os.Remove(rt.cfg.ReadyFile)
 	_ = os.Remove(rt.cfg.PidFile)
+	_ = os.Remove(rt.cfg.StatusFile)
 	return first
+}
+
+// ShutdownStatus returns status from StatusFile if present, else cfg.Status / "success".
+func (rt *Runtime) ShutdownStatus() string {
+	if rt.cfg.StatusFile != "" {
+		if b, err := os.ReadFile(rt.cfg.StatusFile); err == nil {
+			if s := strings.TrimSpace(string(b)); s != "" {
+				return s
+			}
+		}
+	}
+	if rt.cfg.Status != "" {
+		return rt.cfg.Status
+	}
+	return "success"
+}
+
+// WriteStatus writes the job status for the running agent to pick up on SIGTERM.
+func WriteStatus(path, status string) error {
+	if path == "" {
+		path = DefaultStatusFile
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(strings.TrimSpace(status)+"\n"), 0o644)
 }
 
 // Upload gzips the log and POSTs to the API.
@@ -285,6 +338,9 @@ func defaults(cfg Config) Config {
 	}
 	if cfg.PidFile == "" {
 		cfg.PidFile = DefaultPidFile
+	}
+	if cfg.StatusFile == "" {
+		cfg.StatusFile = DefaultStatusFile
 	}
 	if cfg.DNSListen == "" {
 		cfg.DNSListen = "127.0.0.1:53"

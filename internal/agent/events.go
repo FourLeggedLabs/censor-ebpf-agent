@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/dedupe"
-	ebpfutil "github.com/FourLeggedLabs/ebpf-firewall-agent/internal/ebpf"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/events"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/dedupe"
+	ebpfutil "github.com/FourLeggedLabs/censor-ebpf-agent/internal/ebpf"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/events"
 	agentv1 "github.com/FourLeggedLabs/protos/gen/go/censor/agent/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

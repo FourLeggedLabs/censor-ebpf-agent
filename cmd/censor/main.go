@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/agent"
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/version"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/agent"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/version"
 )
 
 func main() {
@@ -82,8 +82,11 @@ func runStart(args []string) int {
 	<-ctx.Done()
 	upCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := rt.Upload(upCtx, "success"); err != nil {
+	status := rt.ShutdownStatus()
+	if err := rt.Upload(upCtx, status); err != nil {
 		fmt.Fprintf(os.Stderr, "upload: %v\n", err)
+		_ = rt.Close()
+		return 1
 	}
 	if err := rt.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "close: %v\n", err)
@@ -95,11 +98,15 @@ func runStart(args []string) int {
 func runStop(args []string) int {
 	fs := flag.NewFlagSet("stop", flag.ContinueOnError)
 	pidFile := fs.String("pidfile", agent.DefaultPidFile, "pid file")
+	statusFile := fs.String("status-file", agent.DefaultStatusFile, "status file for upload metadata")
 	status := fs.String("status", "success", "job status for upload metadata")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	_ = status
+	if err := agent.WriteStatus(*statusFile, *status); err != nil {
+		fmt.Fprintf(os.Stderr, "status: %v\n", err)
+		return 1
+	}
 	b, err := os.ReadFile(*pidFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pidfile: %v\n", err)

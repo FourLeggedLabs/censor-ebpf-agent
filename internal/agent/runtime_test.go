@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FourLeggedLabs/ebpf-firewall-agent/internal/agent"
+	"github.com/FourLeggedLabs/censor-ebpf-agent/internal/agent"
 	"github.com/miekg/dns"
 )
 
