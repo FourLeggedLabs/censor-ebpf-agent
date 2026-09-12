@@ -6,24 +6,33 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cilium/ebpf"
+	"github.com/FourLeggedLabs/ebpf-firewall-agent/bpf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
-// TestLoadCollection verifies generated BPF objects load on a capable kernel.
-// Requires: go generate ./bpf (clang), CAP_BPF/CAP_SYS_ADMIN, kernel 5.8+.
-// Run: task test:bpf  or  task test:bpf:docker
-func TestLoadCollection(t *testing.T) {
+func TestLoadCensorObjects(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root / CAP_BPF")
 	}
 	if err := rlimit.RemoveMemlock(); err != nil {
 		t.Fatal(err)
 	}
-	// Once bpf2go artifacts exist: objs := bpf.CensorObjects{}; bpf.LoadCensorObjects(&objs, nil)
-	spec, err := ebpf.LoadCollectionSpecFromReader(nil)
-	if err == nil {
-		_ = spec
+	var objs bpf.CensorObjects
+	if err := bpf.LoadCensorObjects(&objs, nil); err != nil {
+		t.Fatal(err)
 	}
-	t.Skip("enable after task generate produces censor_bpfel.go")
+	t.Cleanup(func() { _ = objs.Close() })
+	if objs.CensorEgress == nil || objs.AllowV4 == nil {
+		t.Fatal("missing programs/maps")
+	}
+}
+
+func TestLoadCollectionSpec(t *testing.T) {
+	spec, err := bpf.LoadCensor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Programs["censor_egress"] == nil {
+		t.Fatal("missing censor_egress")
+	}
 }

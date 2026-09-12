@@ -19,9 +19,11 @@ tasks:
       - "{{.GO}} mod tidy"
 
   generate:
-    desc: Generate eBPF Go bindings (Linux / docker)
+    desc: Generate eBPF Go bindings (needs clang with bpf target; Homebrew LLVM on macOS)
     cmds:
-      - "{{.GO}} generate ./bpf/..."
+      - |
+        export PATH="/opt/homebrew/opt/llvm/bin:/usr/local/opt/llvm/bin:$PATH"
+        {{.GO}} generate ./bpf/...
 
   test:
     desc: Run unit tests (non-BPF)
